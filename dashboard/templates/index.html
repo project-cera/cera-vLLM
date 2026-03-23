@@ -227,10 +227,14 @@
       }
     }
 
+    // Track which model is being activated to prevent polling from reverting the button
+    let activatingModelId = null;
+
     async function activateModel(modelId) {
       const btn = event.target;
       btn.disabled = true;
       btn.textContent = 'Activating...';
+      activatingModelId = modelId;
 
       // Disable all other activate buttons
       document.querySelectorAll('.activate-btn').forEach(b => { b.disabled = true; });
@@ -253,8 +257,9 @@
           el.className = 'status-badge status-downloaded';
           el.textContent = 'Downloaded';
         });
-        // Polling will auto-update to "Active" / "Serving" once vLLM confirms
+        // activatingModelId cleared when polling sees 'active' or 'error' status
       } else {
+        activatingModelId = null;
         const data = await resp.json();
         alert(data.error || 'Activation failed');
         // Re-enable all activate buttons
@@ -415,11 +420,21 @@
                 actionsCell.innerHTML = '<div class="loading-indicator"><span class="spinner"></span><span>Loading...</span></div>';
               }
             } else if (s === 'active') {
+              // Model is now serving — clear the activating lock
+              if (activatingModelId === modelId) {
+                activatingModelId = null;
+              }
               if (!actionsCell.querySelector('.text-success')) {
                 actionsCell.innerHTML = '<span class="text-success">Serving</span>';
               }
             } else if (s === 'downloaded') {
-              if (!actionsCell.querySelector('.activate-btn')) {
+              // Don't revert to Activate button if we're in the middle of activating this model
+              if (activatingModelId === modelId) {
+                // Keep showing loading spinner — the backend hasn't caught up yet
+                if (!actionsCell.querySelector('.loading-indicator')) {
+                  actionsCell.innerHTML = '<div class="loading-indicator"><span class="spinner"></span><span>Loading...</span></div>';
+                }
+              } else if (!actionsCell.querySelector('.activate-btn')) {
                 actionsCell.innerHTML = `<button onclick="activateModel('${modelId}')" class="btn btn-sm btn-primary activate-btn">Activate</button>`;
               }
             }
