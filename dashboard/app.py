@@ -588,11 +588,24 @@ async def add_custom_model(request: Request):
         if await existing.fetchone():
             return JSONResponse({"error": "Model already exists"}, status_code=409)
 
+        # Try to fetch metadata from HuggingFace
         display_name = model_id.split("/")[-1]
+        vram_gb = 0
+        try:
+            hf = HfApi()
+            model_info = hf.model_info(model_id)
+            if getattr(model_info, "safetensors", None) and isinstance(model_info.safetensors, dict):
+                params = model_info.safetensors.get("total", None)
+                if params:
+                    # BF16 = 2 bytes/param, add ~20% overhead for KV cache
+                    vram_gb = int((params * 2 * 1.2) / (1024**3))
+        except Exception:
+            pass  # HF lookup failed — use defaults
+
         await db.execute(
             """INSERT INTO models (model_id, display_name, vram_gb, speed, quality, description, is_recommended)
-               VALUES (?, ?, 0, 'Unknown', 'Unknown', 'Custom model', 0)""",
-            (model_id, display_name),
+               VALUES (?, ?, ?, 'Unknown', 'Unknown', 'Custom model', 0)""",
+            (model_id, display_name, vram_gb),
         )
         await db.commit()
 
@@ -610,13 +623,47 @@ async def search_hf_models(request: Request, q: str = ""):
 
     try:
         hf = HfApi()
-        models = hf.list_models(
+        models = []
+        seen_ids = set()
+
+        # If query looks like an exact model ID (contains '/'), try direct lookup first
+        if "/" in q:
+            try:
+                exact = hf.model_info(q)
+                if exact:
+                    models.append(exact)
+                    seen_ids.add(exact.id)
+            except Exception:
+                pass  # Not found — fall through to search
+
+        # Search with text-generation tag for best relevance
+        tagged = list(hf.list_models(
             search=q,
             pipeline_tag="text-generation",
             sort="downloads",
             direction=-1,
             limit=10,
-        )
+        ))
+        for m in tagged:
+            if m.id not in seen_ids:
+                models.append(m)
+                seen_ids.add(m.id)
+
+        # If few results, also search without pipeline tag filter
+        # (some models like Qwen3.5 MoE may not have the tag set)
+        if len(models) < 5:
+            untagged = hf.list_models(
+                search=q,
+                sort="downloads",
+                direction=-1,
+                limit=10,
+            )
+            for m in untagged:
+                if m.id not in seen_ids:
+                    models.append(m)
+                    seen_ids.add(m.id)
+                if len(models) >= 10:
+                    break
         results = []
         for m in models:
             # Estimate size from safetensors parameter count (2 bytes/param for BF16)
