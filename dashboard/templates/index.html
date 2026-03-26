@@ -362,9 +362,9 @@
         document.getElementById('metric-gen-tokens').textContent = formatNumber(m.generation_tokens_total || 0);
 
         // Update GPU bars
+        const gpuContainer = document.getElementById('gpu-container');
         if (data.gpus && data.gpus.length > 0) {
-          const container = document.getElementById('gpu-container');
-          container.innerHTML = data.gpus.map(gpu => `
+          gpuContainer.innerHTML = data.gpus.map(gpu => `
             <div class="gpu-card">
               <div class="gpu-header">
                 <strong>GPU ${gpu.index}</strong>
@@ -379,6 +379,8 @@
               </div>
             </div>
           `).join('');
+        } else if (!gpuContainer.querySelector('.gpu-card')) {
+          gpuContainer.innerHTML = '<p style="color: var(--text-muted);">No GPUs detected</p>';
         }
 
         // Update model statuses and action cells

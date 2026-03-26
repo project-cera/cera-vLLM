@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import subprocess
@@ -21,6 +22,8 @@ from huggingface_hub import snapshot_download, HfApi
 from itsdangerous import URLSafeTimedSerializer
 
 from models_registry import RECOMMENDED_MODELS
+
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 
@@ -261,26 +264,41 @@ async def get_vllm_metrics() -> dict:
 
 def get_gpu_info() -> list[dict]:
     """Get GPU utilization and VRAM usage via nvidia-smi."""
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        gpus = []
-        for line in result.stdout.strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 5:
-                gpus.append({
-                    "index": int(parts[0]),
-                    "name": parts[1],
-                    "memory_used_mb": int(parts[2]),
-                    "memory_total_mb": int(parts[3]),
-                    "utilization_pct": int(parts[4]),
-                })
-        return gpus
-    except Exception:
-        return []
+    for attempt in range(2):
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                logger.warning("nvidia-smi exited with code %d: %s", result.returncode, result.stderr.strip())
+                continue
+            gpus = []
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 5:
+                    try:
+                        gpus.append({
+                            "index": int(parts[0]),
+                            "name": parts[1],
+                            "memory_used_mb": int(float(parts[2])),
+                            "memory_total_mb": int(float(parts[3])),
+                            "utilization_pct": int(float(parts[4])),
+                        })
+                    except (ValueError, IndexError):
+                        logger.warning("Failed to parse nvidia-smi line: %s", line)
+                        continue
+            if gpus:
+                return gpus
+        except subprocess.TimeoutExpired:
+            logger.warning("nvidia-smi timed out (attempt %d/2)", attempt + 1)
+        except FileNotFoundError:
+            logger.warning("nvidia-smi not found")
+            return []
+        except Exception:
+            logger.warning("nvidia-smi failed (attempt %d/2)", attempt + 1, exc_info=True)
+    return []
 
 
 # --- Model Download ---
