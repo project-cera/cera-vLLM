@@ -263,42 +263,44 @@ async def get_vllm_metrics() -> dict:
 
 
 def get_gpu_info() -> list[dict]:
-    """Get GPU utilization and VRAM usage via nvidia-smi."""
-    for attempt in range(2):
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=15,
-            )
-            if result.returncode != 0:
-                logger.warning("nvidia-smi exited with code %d: %s", result.returncode, result.stderr.strip())
-                continue
-            gpus = []
-            for line in result.stdout.strip().splitlines():
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) >= 5:
-                    try:
-                        gpus.append({
-                            "index": int(parts[0]),
-                            "name": parts[1],
-                            "memory_used_mb": int(float(parts[2])),
-                            "memory_total_mb": int(float(parts[3])),
-                            "utilization_pct": int(float(parts[4])),
-                        })
-                    except (ValueError, IndexError):
-                        logger.warning("Failed to parse nvidia-smi line: %s", line)
-                        continue
-            if gpus:
-                return gpus
-        except subprocess.TimeoutExpired:
-            logger.warning("nvidia-smi timed out (attempt %d/2)", attempt + 1)
-        except FileNotFoundError:
-            logger.warning("nvidia-smi not found")
+    """Get GPU utilization and VRAM usage via nvidia-smi locally.
+
+    Runs nvidia-smi directly in this container rather than exec'ing into the
+    vLLM container, because NVML can become stale inside long-running GPU
+    containers while it stays reliable when invoked locally.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            logger.warning("nvidia-smi exited with code %d: %s", result.returncode, result.stderr.strip())
             return []
-        except Exception:
-            logger.warning("nvidia-smi failed (attempt %d/2)", attempt + 1, exc_info=True)
-    return []
+        gpus = []
+        for line in result.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 5:
+                try:
+                    gpus.append({
+                        "index": int(parts[0]),
+                        "name": parts[1],
+                        "memory_used_mb": int(float(parts[2])),
+                        "memory_total_mb": int(float(parts[3])),
+                        "utilization_pct": int(float(parts[4])),
+                    })
+                except (ValueError, IndexError):
+                    logger.warning("Failed to parse nvidia-smi line: %s", line)
+        return gpus
+    except Exception:
+        logger.warning("Failed to get GPU info", exc_info=True)
+        return []
 
 
 # --- Model Download ---
