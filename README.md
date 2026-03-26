@@ -1,6 +1,6 @@
 # cera-vLLM
 
-Self-hosted local LLM server for the [CERA](https://github.com/project-cera/cera) framework. Run open-source models on your own GPU(s) and use them for CERA's generation phase — no rate limits, no per-token costs.
+Self-hosted local LLM server for the [CERA](https://github.com/thangk/cera) framework. Run open-source models on your own GPU(s) and use them for CERA's generation phase — no rate limits, no per-token costs.
 
 > **Note:** This project is under active development.
 
@@ -165,8 +165,8 @@ The dashboard auto-generates a secure API key on first boot. You can:
 
 ## Related Projects
 
-- [CERA](https://github.com/project-cera/cera) — Configurable Environment for Review Authentication
-- [cera-LADy](https://github.com/project-cera/cera-LADy) — Evaluation framework for generated datasets
+- [CERA](https://github.com/thangk/cera) — Configurable Environment for Review Authentication
+- [cera-LADy](https://github.com/thangk/cera-LADy) — Evaluation framework for generated datasets
 
 ## License
 
