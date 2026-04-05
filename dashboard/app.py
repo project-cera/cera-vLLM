@@ -501,7 +501,7 @@ async def dashboard(request: Request):
         db.row_factory = aiosqlite.Row
         api_key = await get_config(db, "api_key")
         active_model = await get_config(db, "active_model")
-        cursor = await db.execute("SELECT * FROM models ORDER BY is_recommended DESC, display_name")
+        cursor = await db.execute("SELECT * FROM models WHERE status != 'not_downloaded' ORDER BY display_name")
         models = [dict(row) for row in await cursor.fetchall()]
 
     # Merge in-memory download progress
@@ -588,6 +588,35 @@ async def activate_model(model_id: str, request: Request):
         "status": "activating" if success else "error",
         "message": "vLLM restarting with new model..." if success else "Failed to restart vLLM container",
     })
+
+
+@app.post("/api/unserve/{model_id:path}")
+async def unserve_model(model_id: str, request: Request):
+    """Stop serving a model (stop vLLM container)."""
+    if not verify_session(request):
+        raise HTTPException(status_code=401)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            "UPDATE models SET status = 'downloaded' WHERE model_id = ? AND status IN ('active', 'loading')",
+            (model_id,),
+        )
+        await set_config(db, "active_model", "")
+
+    # Remove config and stop vLLM
+    config_path = CONFIG_DIR / "active_model.json"
+    if config_path.exists():
+        config_path.unlink()
+
+    try:
+        client = get_docker_client()
+        container = client.containers.get(VLLM_CONTAINER_NAME)
+        container.stop(timeout=30)
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to stop vLLM: {e}"}, status_code=500)
+
+    return JSONResponse({"status": "stopped"})
 
 
 @app.post("/api/add-custom")
