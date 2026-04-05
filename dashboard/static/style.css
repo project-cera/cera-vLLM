@@ -199,6 +199,16 @@ button:disabled {
   background: var(--primary);
 }
 
+.btn-danger {
+  color: var(--text-error);
+  border-color: var(--text-error);
+}
+
+.btn-danger:hover {
+  background: var(--text-error);
+  color: white;
+}
+
 /* --- Badges --- */
 .badge {
   display: inline-block;
@@ -486,6 +496,83 @@ button:disabled {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* --- Currently Serving Card --- */
+.serving-card {
+  border-color: var(--text-success);
+  border-width: 1.5px;
+}
+
+.serving-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.serving-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.serving-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-success);
+}
+
+.serving-dot-live {
+  background: var(--text-success);
+  box-shadow: 0 0 6px var(--text-success);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.serving-dot-loading {
+  background: var(--text-warning);
+  box-shadow: 0 0 6px var(--text-warning);
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.serving-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-success);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.serving-model {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.serving-model-name {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.serving-model-id {
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+/* Active model row highlight */
+.models-table tbody tr.model-row-active {
+  background: rgba(34, 197, 94, 0.06);
+  border-left: 3px solid var(--text-success);
+}
+
+[data-theme="light"] .serving-card { border-color: var(--text-success); }
+[data-theme="light"] .models-table tbody tr.model-row-active { background: rgba(22, 163, 74, 0.06); }
 
 /* --- Utility --- */
 .text-muted { color: var(--text-muted); font-size: 0.8125rem; }

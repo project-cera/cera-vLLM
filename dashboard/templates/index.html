@@ -21,6 +21,24 @@
   </header>
 
   <main>
+    <!-- Currently Serving Model -->
+    <section class="card serving-card" id="serving-card" {% if not active_model %}style="display: none;"{% endif %}>
+      <div class="serving-content">
+        <div class="serving-indicator">
+          <span class="serving-dot" id="serving-dot"></span>
+          <span class="serving-label">Currently Serving</span>
+        </div>
+        <div class="serving-model">
+          <span class="serving-model-name" id="serving-model-name">
+            {%- if active_model %}{{ active_model.split('/')[-1] }}{% endif -%}
+          </span>
+          <span class="serving-model-id text-muted" id="serving-model-id">
+            {%- if active_model %}{{ active_model }}{% endif -%}
+          </span>
+        </div>
+      </div>
+    </section>
+
     <!-- CERA Connection Info -->
     <section class="card">
       <h2>CERA Connection</h2>
@@ -113,55 +131,42 @@
           <tr>
             <th>Model</th>
             <th>VRAM</th>
-            <th>Speed</th>
-            <th>Quality</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for model in models %}
-          <tr id="model-row-{{ model.model_id | replace('/', '--') }}">
+          <tr id="model-row-{{ model.model_id | replace('/', '--') }}" class="{% if model.status == 'active' or model.status == 'loading' %}model-row-active{% endif %}">
             <td>
               <div class="model-name">{{ model.display_name }}</div>
               <div class="model-id text-muted">{{ model.model_id }}</div>
-              {% if model.requires_hf_token and not hf_token_set %}
-              <div class="text-warning">Requires HF_TOKEN</div>
-              {% endif %}
             </td>
             <td>{% if model.vram_gb > 0 %}~{{ model.vram_gb }} GB{% else %}Unknown{% endif %}</td>
-            <td>{{ model.speed }}</td>
-            <td>{{ model.quality }}</td>
             <td>
               <span class="status-badge status-{{ model.status }}" id="status-{{ model.model_id | replace('/', '--') }}">
-                {% if model.status == 'not_downloaded' %}Not Downloaded
-                {% elif model.status == 'downloading' %}Downloading {{ model.download_progress | round(0) }}%
+                {% if model.status == 'downloading' %}Downloading {{ model.download_progress | round(0) }}%
                 {% elif model.status == 'downloaded' %}Downloaded
                 {% elif model.status == 'loading' %}Loading...
-                {% elif model.status == 'active' %}Active
+                {% elif model.status == 'active' %}Serving
                 {% else %}{{ model.status }}{% endif %}
               </span>
             </td>
             <td class="actions-cell" id="actions-{{ model.model_id | replace('/', '--') }}">
-              {% if model.status == 'not_downloaded' %}
-              <button onclick="downloadModel('{{ model.model_id }}')" class="btn btn-sm btn-primary"
-                {% if model.requires_hf_token and not hf_token_set %}disabled title="Set HF_TOKEN in .env first"{% endif %}>
-                Download
-              </button>
-              {% elif model.status == 'downloading' %}
+              {% if model.status == 'downloading' %}
               <div class="progress-bar-container small">
                 <div class="progress-bar" id="progress-{{ model.model_id | replace('/', '--') }}"
                      style="width: {{ model.download_progress }}%"></div>
               </div>
               {% elif model.status == 'downloaded' %}
-              <button onclick="activateModel('{{ model.model_id }}')" class="btn btn-sm btn-primary activate-btn">Activate</button>
+              <button onclick="activateModel('{{ model.model_id }}')" class="btn btn-sm btn-primary activate-btn">Serve</button>
               {% elif model.status == 'loading' %}
               <div class="loading-indicator">
                 <span class="spinner"></span>
                 <span>Loading...</span>
               </div>
               {% elif model.status == 'active' %}
-              <span class="text-success">Serving</span>
+              <button onclick="unserveModel('{{ model.model_id }}')" class="btn btn-sm btn-outline btn-danger">Unserve</button>
               {% endif %}
             </td>
           </tr>
@@ -264,6 +269,31 @@
         alert(data.error || 'Activation failed');
         // Re-enable all activate buttons
         document.querySelectorAll('.activate-btn').forEach(b => { b.disabled = false; });
+      }
+    }
+
+    async function unserveModel(modelId) {
+      if (!confirm('Stop serving this model?')) return;
+      const resp = await fetch(`/api/unserve/${modelId}`, { method: 'POST' });
+      if (resp.ok) {
+        const safeId = modelId.replace(/\//g, '--');
+        const statusEl = document.getElementById(`status-${safeId}`);
+        const actionsCell = document.getElementById(`actions-${safeId}`);
+        if (statusEl) {
+          statusEl.className = 'status-badge status-downloaded';
+          statusEl.textContent = 'Downloaded';
+        }
+        if (actionsCell) {
+          actionsCell.innerHTML = `<button onclick="activateModel('${modelId}')" class="btn btn-sm btn-primary activate-btn">Serve</button>`;
+        }
+        // Hide serving card
+        document.getElementById('serving-card').style.display = 'none';
+        // Remove row highlight
+        const row = document.getElementById(`model-row-${safeId}`);
+        if (row) row.classList.remove('model-row-active');
+      } else {
+        const data = await resp.json();
+        alert(data.error || 'Failed to unserve model');
       }
     }
 
@@ -383,6 +413,40 @@
           gpuContainer.innerHTML = '<p style="color: var(--text-muted);">No GPUs detected</p>';
         }
 
+        // Update currently serving card
+        const servingCard = document.getElementById('serving-card');
+        const servingDot = document.getElementById('serving-dot');
+        const servingModelName = document.getElementById('serving-model-name');
+        const servingModelId = document.getElementById('serving-model-id');
+        let activeModelId = null;
+        let activeModelLoading = false;
+        for (const [mid, minfo] of Object.entries(data.models)) {
+          if (minfo.status === 'active' || minfo.status === 'loading') {
+            activeModelId = mid;
+            activeModelLoading = minfo.status === 'loading';
+            break;
+          }
+        }
+        if (activeModelId) {
+          servingCard.style.display = '';
+          servingModelName.textContent = activeModelId.split('/').pop();
+          servingModelId.textContent = activeModelId;
+          servingDot.className = activeModelLoading ? 'serving-dot serving-dot-loading' : 'serving-dot serving-dot-live';
+          const servingLabel = document.querySelector('.serving-label');
+          servingLabel.textContent = activeModelLoading ? 'Loading Model' : 'Currently Serving';
+          servingLabel.style.color = activeModelLoading ? 'var(--text-warning)' : 'var(--text-success)';
+          servingCard.style.borderColor = activeModelLoading ? 'var(--text-warning)' : 'var(--text-success)';
+        } else {
+          servingCard.style.display = 'none';
+        }
+
+        // Update row highlights
+        document.querySelectorAll('.model-row-active').forEach(r => r.classList.remove('model-row-active'));
+        if (activeModelId) {
+          const activeRow = document.getElementById(`model-row-${activeModelId.replace(/\//g, '--')}`);
+          if (activeRow) activeRow.classList.add('model-row-active');
+        }
+
         // Update model statuses and action cells
         let anyLoading = false;
         for (const [modelId, info] of Object.entries(data.models)) {
@@ -404,14 +468,12 @@
               if (progressEl) {
                 progressEl.style.width = `${info.download_progress}%`;
               }
-            } else if (s === 'not_downloaded') {
-              statusEl.textContent = 'Not Downloaded';
             } else if (s === 'downloaded') {
               statusEl.textContent = 'Downloaded';
             } else if (s === 'loading') {
               statusEl.textContent = 'Loading...';
             } else if (s === 'active') {
-              statusEl.textContent = 'Active';
+              statusEl.textContent = 'Serving';
             }
           }
 
@@ -426,18 +488,18 @@
               if (activatingModelId === modelId) {
                 activatingModelId = null;
               }
-              if (!actionsCell.querySelector('.text-success')) {
-                actionsCell.innerHTML = '<span class="text-success">Serving</span>';
+              if (!actionsCell.querySelector('.btn-danger')) {
+                actionsCell.innerHTML = `<button onclick="unserveModel('${modelId}')" class="btn btn-sm btn-outline btn-danger">Unserve</button>`;
               }
             } else if (s === 'downloaded') {
-              // Don't revert to Activate button if we're in the middle of activating this model
+              // Don't revert to Serve button if we're in the middle of activating this model
               if (activatingModelId === modelId) {
                 // Keep showing loading spinner — the backend hasn't caught up yet
                 if (!actionsCell.querySelector('.loading-indicator')) {
                   actionsCell.innerHTML = '<div class="loading-indicator"><span class="spinner"></span><span>Loading...</span></div>';
                 }
               } else if (!actionsCell.querySelector('.activate-btn')) {
-                actionsCell.innerHTML = `<button onclick="activateModel('${modelId}')" class="btn btn-sm btn-primary activate-btn">Activate</button>`;
+                actionsCell.innerHTML = `<button onclick="activateModel('${modelId}')" class="btn btn-sm btn-primary activate-btn">Serve</button>`;
               }
             }
           }
