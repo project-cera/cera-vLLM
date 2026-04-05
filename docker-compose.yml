@@ -1,6 +1,6 @@
 services:
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:gemma4
     container_name: cera-vllm
     ports:
       - "${VLLM_PORT:-8100}:8000"
