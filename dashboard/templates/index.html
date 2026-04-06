@@ -153,7 +153,9 @@
               </span>
             </td>
             <td class="actions-cell" id="actions-{{ model.model_id | replace('/', '--') }}">
-              {% if model.status == 'downloading' %}
+              {% if model.status == 'not_downloaded' %}
+              <button onclick="downloadModel('{{ model.model_id }}')" class="btn btn-sm btn-primary">Download</button>
+              {% elif model.status == 'downloading' %}
               <div class="progress-bar-container small">
                 <div class="progress-bar" id="progress-{{ model.model_id | replace('/', '--') }}"
                      style="width: {{ model.download_progress }}%"></div>
@@ -479,7 +481,9 @@
 
           // Update action cells to match current status
           if (actionsCell) {
-            if (s === 'loading') {
+            if (s === 'not_downloaded') {
+              actionsCell.innerHTML = `<button onclick="downloadModel('${modelId}')" class="btn btn-sm btn-primary">Download</button>`;
+            } else if (s === 'loading') {
               if (!actionsCell.querySelector('.loading-indicator')) {
                 actionsCell.innerHTML = '<div class="loading-indicator"><span class="spinner"></span><span>Loading...</span></div>';
               }
