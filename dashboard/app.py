@@ -21,7 +21,6 @@ from fastapi.templating import Jinja2Templates
 from huggingface_hub import snapshot_download, HfApi
 from itsdangerous import URLSafeTimedSerializer
 
-from models_registry import RECOMMENDED_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,7 @@ download_tasks: dict[str, dict] = {}
 # --- Database ---
 
 async def init_db():
-    """Initialize SQLite database with schema and seed recommended models."""
+    """Initialize SQLite database with schema."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS models (
@@ -63,8 +62,7 @@ async def init_db():
                 description TEXT NOT NULL DEFAULT '',
                 requires_hf_token INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'not_downloaded',
-                download_progress REAL NOT NULL DEFAULT 0.0,
-                is_recommended INTEGER NOT NULL DEFAULT 0
+                download_progress REAL NOT NULL DEFAULT 0.0
             )
         """)
         await db.execute("""
@@ -73,23 +71,6 @@ async def init_db():
                 value TEXT NOT NULL
             )
         """)
-        await db.commit()
-
-        # Seed recommended models if not present
-        for model in RECOMMENDED_MODELS:
-            existing = await db.execute(
-                "SELECT 1 FROM models WHERE model_id = ?", (model["model_id"],)
-            )
-            if not await existing.fetchone():
-                await db.execute(
-                    """INSERT INTO models
-                       (model_id, display_name, vram_gb, speed, quality, description,
-                        requires_hf_token, is_recommended)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
-                    (model["model_id"], model["display_name"], model["vram_gb"],
-                     model["speed"], model["quality"], model["description"],
-                     1 if model["requires_hf_token"] else 0),
-                )
         await db.commit()
 
         # Generate API key on first boot
@@ -497,11 +478,36 @@ async def dashboard(request: Request):
     if not verify_session(request):
         return RedirectResponse("/login", status_code=303)
 
+    vllm_status = await get_vllm_status()
+    gpus = get_gpu_info()
+    served_models = vllm_status.get("models", [])
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         api_key = await get_config(db, "api_key")
         active_model = await get_config(db, "active_model")
-        cursor = await db.execute("SELECT * FROM models WHERE status != 'not_downloaded' ORDER BY display_name")
+
+        # Reconcile DB status with what vLLM is actually serving
+        if served_models:
+            # Promote loading → active for models vLLM confirms
+            for mid in served_models:
+                await db.execute(
+                    "UPDATE models SET status = 'active' WHERE model_id = ? AND status IN ('loading', 'downloaded')",
+                    (mid,),
+                )
+            # Demote models that claim active/loading but aren't actually served
+            cursor = await db.execute(
+                "SELECT model_id FROM models WHERE status IN ('active', 'loading')"
+            )
+            for row in await cursor.fetchall():
+                if row["model_id"] not in served_models:
+                    await db.execute(
+                        "UPDATE models SET status = 'downloaded' WHERE model_id = ?",
+                        (row["model_id"],),
+                    )
+            await db.commit()
+
+        cursor = await db.execute("SELECT * FROM models ORDER BY display_name")
         models = [dict(row) for row in await cursor.fetchall()]
 
     # Merge in-memory download progress
@@ -512,9 +518,6 @@ async def dashboard(request: Request):
             model["download_progress"] = task.get("progress", 0.0)
             if "error" in task:
                 model["download_error"] = task["error"]
-
-    vllm_status = await get_vllm_status()
-    gpus = get_gpu_info()
 
     # Get external IP for CERA config
     external_port = os.environ.get("VLLM_PORT", "8100")
@@ -652,8 +655,8 @@ async def add_custom_model(request: Request):
             pass  # HF lookup failed — use defaults
 
         await db.execute(
-            """INSERT INTO models (model_id, display_name, vram_gb, speed, quality, description, is_recommended)
-               VALUES (?, ?, ?, 'Unknown', 'Unknown', 'Custom model', 0)""",
+            """INSERT INTO models (model_id, display_name, vram_gb, speed, quality, description)
+               VALUES (?, ?, ?, 'Unknown', 'Unknown', 'Custom model')""",
             (model_id, display_name, vram_gb),
         )
         await db.commit()
