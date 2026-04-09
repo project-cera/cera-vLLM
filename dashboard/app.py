@@ -445,6 +445,31 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/api/serving-models")
+async def serving_models():
+    """Public endpoint for external frontends to discover currently served models."""
+    vllm_status = await get_vllm_status()
+
+    models = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT model_id, display_name, vram_gb FROM models WHERE status = 'active'"
+        )
+        for row in await cursor.fetchall():
+            models.append({
+                "id": row["model_id"],
+                "name": row["display_name"],
+                "vram_gb": row["vram_gb"],
+            })
+
+    return JSONResponse({
+        "models": models,
+        "serve_limit": 1,
+        "vllm_status": vllm_status["status"],
+    })
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """Login page."""
@@ -777,7 +802,9 @@ async def api_status(request: Request):
         # Auto-promote loading → active when vLLM confirms the model is serving
         served_models = vllm_status.get("models", [])
         for model_id, info in model_statuses.items():
-            if info["status"] == "loading" and model_id in served_models:
+            if info["status"] == "loading" and any(
+                model_id in sm or sm in model_id for sm in served_models
+            ):
                 await db.execute(
                     "UPDATE models SET status = 'active' WHERE model_id = ?",
                     (model_id,),
